@@ -1,0 +1,354 @@
+<?php
+
+/**
+ * Реализация hook_perm().
+ */
+function yasearch_perm() {
+	return array('access yasearch', 'administer yasearch');
+}
+
+/**
+ * Реализация hook_menu().
+ */
+function yasearch_menu() {
+	$items = array();
+
+	$items['admin/config/search/yasearch'] = array(
+		'title' => t('YaSearch'),
+		'description' => t('YaSearch settings'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('yasearch_admin_settings'),
+		'access arguments' => array('administer yasearch'),
+		'type' => MENU_NORMAL_ITEM,
+	);
+
+	$items['yasearch'] = array(
+		'title' => t('Yandex Search'),
+		'description' => t('Yandex Search'),
+		'page callback' => 'yasearch_query',
+		'access callback' => true,
+		//'access arguments' => array('access yasearch'),
+		'type' => MENU_CALLBACK,
+	);
+	
+	$items['yasearch/%'] = array(
+		'title' => t('Yandex Search'),
+		'description' => t('Yandex Search'),
+		'page callback' => 'yasearch_query',
+		'page arguments' => array(1),
+		'access callback' => true,
+		//'access arguments' => array('access yasearch'),
+		'type' => MENU_CALLBACK,
+	);
+	
+	return $items;
+}
+
+/**
+ *
+ */
+function yasearch_admin_settings() {
+	$form = array();
+	
+	$form['yasearch_user'] = array(
+		'#type' => 'textfield', 
+		'#title' => t('Ваше имя пользователя'), 
+		'#default_value' => variable_get('yasearch_user', ''), 
+		'#description' => t('Получить адрес запроса можно по ссылке: http://xml.yandex.ru/settings.xml<br />Например: http://xmlsearch.yandex.ru/xmlsearch?user=<strong>hostname-ru</strong>&key=XX.XXXXXXXX:YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY<br /> Т.е. нужно указать: hostname-ru'),
+		'#maxlength' => 128,
+		'#required' => TRUE,
+	);
+	
+	
+	$form['yasearch_key'] = array(
+		'#type' => 'textfield', 
+		'#title' => t('Ваш ключ'), 
+		'#default_value' => variable_get('yasearch_key', ''), 
+		'#description' => t('Получить адрес запроса можно по ссылке: http://xml.yandex.ru/settings.xml<br />Например: http://xmlsearch.yandex.ru/xmlsearch?user=hostname-ru&key=<strong>XX.XXXXXXXX:YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY</strong><br /> Т.е. нужно указать: XX.XXXXXXXX:YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'),
+		'#maxlength' => 128,
+		'#required' => TRUE,
+	);
+	
+	$form['yasearch_host'] = array(
+		'#type' => 'textfield', 
+		'#title' => t('Укажите хост'), 
+		'#default_value' => variable_get('yasearch_host', ''), 
+		'#description' => t('Укажите хост на котором будет осуществлен поиск<br />Например: hostname.ru'),
+		'#maxlength' => 64,
+	);
+	
+	$form['yasearch_image'] = array(
+		'#type' => 'radios', 
+		'#title' => t('Выберите логотип'), 
+		'#default_value' => variable_get('yasearch_image','rb'),
+		'#options' => array(
+			'rb' => '<img src="/'.drupal_get_path('module', 'yasearch').'/images/yandex_rb.png" />'.t(' — логотип для размещения на белом/светлом фоне'), 
+			'rw' => '<img src="/'.drupal_get_path('module', 'yasearch').'/images/yandex_rw.png" />'.t(' — логотип для размещения на черном/темном фоне'), 
+			'ww' => '<img src="/'.drupal_get_path('module', 'yasearch').'/images/yandex_ww.png" />'.t(' — логотип для размещения на красном фоне'),
+		),
+		'#description' => t('При использовании XML-поиска на сайте(-ах) пользователя Сервиса путем размещения (публикации) результатов обязательно указание на технологию Яндекса путем размещения вверху страницы с результатами поиска (непосредственно над результатами поиска) графического логотипа Яндекса.'),
+	);
+	
+	drupal_add_css('
+		.form-item-yasearch-image img { vertical-align: top; }
+		#edit-yasearch-image-rw + label img { background: grey; }
+		#edit-yasearch-image-ww + label img { background: red; }
+	', array('type' => 'inline'));
+	
+	$form['yasearch_limit'] = array(
+		'#type' => 'textfield', 
+		'#title' => t('Укажите количестко результатов на страницу'), 
+		'#default_value' => variable_get('yasearch_limit', '10'), 
+		'#description' => t('В Yandex XML ограничение 100 страниц (100*10=1000 ответов)<br />Максимально доступное значение 100<br />Например: 10'),
+		'#maxlength' => 3,
+	);
+	
+	$form['yasearch_passage_empty'] = array(
+		'#type' => 'textfield', 
+		'#title' => t('Укажите текст при отсутствии описания'), 
+		'#default_value' => variable_get('yasearch_passage_empty', '[нет данных]'), 
+		'#description' => t('Например: [нет данных]'),
+		'#maxlength' => 128,
+	);
+  
+	$form['yasearch_empty'] = array(
+		'#type' => 'textarea', 
+		'#title' => t('Укажите текст при отсутствии результатов'), 
+		'#default_value' => variable_get('yasearch_empty', ''), 
+		'#description' => t('Например: Искомая комбинация слов нигде не встречается.'),
+	);
+
+	$form['#validate'][] = 'yasearch_admin_settings_validate';
+
+	return system_settings_form($form);
+}
+
+/**
+ *
+ */
+function yasearch_admin_settings_validate($form, &$form_state){
+	/* Проверяем поле 'yasearch_limit' */
+	if (is_numeric($form_state['values']['yasearch_limit']) === true) {
+		if (!((int)$form_state['values']['yasearch_limit'] == $form_state['values']['yasearch_limit'])) {
+			form_set_error('yasearch_limit', t('Значение должно быть целым числом'));
+		}
+		else if ($form_state['values']['yasearch_limit'] > 100) {
+			form_set_error('yasearch_limit', t('Количестко результатов на странице должно быть меньше или равно 100'));
+		}
+		else if ($form_state['values']['yasearch_limit'] < 2) {
+			form_set_error('yasearch_limit', t('Количестко результатов на странице должно быть больше или равно 2'));
+		}
+	}
+	else {
+		form_set_error('yasearch_limit', t('Значение должно быть числом'));
+	}
+}
+
+/**
+ *
+ */
+function yasearch_query($keys = ''){
+	if ($keys == '' && !empty($_POST['keys'])) {
+		drupal_goto('yasearch/'.$_POST['keys']);
+	}
+	
+	$output = '';
+	$output .= drupal_render(drupal_get_form('yasearch_query_form', $keys));
+	
+	if ($keys != '') {
+		$output .= yasearch_parse($keys);
+	}
+	
+	return $output;
+}
+
+/**
+ *
+ */
+function yasearch_query_form($form, &$form_state, $keys) {
+	$form['#action'] = $GLOBALS['base_url'].'/yasearch';
+	$form['#attributes'] = array('class' => 'search-form yasearch-form');
+	
+	$form['basic'] = array('#type' => 'item', '#title' => t('Enter your keywords'));
+	$form['basic']['inline'] = array('#prefix' => '<div class="container-inline">', '#suffix' => '</div>');
+	$form['basic']['inline']['keys'] = array(
+		'#type' => 'textfield',
+		'#title' => '',
+		'#default_value' => $keys,
+		'#size' => 40,
+		'#maxlength' => 400,
+	);
+	
+	$form['basic']['inline']['submit'] = array(
+		'#type' => 'submit', 
+		'#value' => t('Search'),
+		'#attributes' => array(
+			'class' => array('btn'),
+		),
+	);
+	
+	$form['#submit'][] = 'yasearch_query_form_submit';
+
+	return $form;
+}
+
+/**
+ *
+ */
+function yasearch_query_form_submit($form, &$form_state){
+	if (isset($_REQUEST['destination'])) {
+		unset($_REQUEST['destination']);
+	}
+	
+	if (isset($_REQUEST['edit']['destination'])) {
+		unset($_REQUEST['edit']['destination']);
+	}
+    
+	$form_state['redirect'] = 'yasearch/'. trim($form_state['values']['keys']);
+}
+
+/**
+ *
+ */
+function yasearch_parse($keys) {
+	require_once 'yandex.inc';
+
+	$limit = variable_get('yasearch_limit', '10');
+	$element = 0;
+	$output = '';
+
+	// get "query" and "page" from request
+	$query = $keys;
+	$page  = isset($_GET['page']) ?$_GET['page']:0;
+	$host  = variable_get('yasearch_host', '');
+	$geo   = isset($_REQUEST['geo']) ?$_REQUEST['geo']:null;
+	$cat   = isset($_REQUEST['cat']) ?$_REQUEST['cat']:null;
+	$theme = isset($_REQUEST['theme']) ?$_REQUEST['theme']:null;
+	
+	if (!empty($query)) {
+		$user = variable_get('yasearch_user', '');
+		$key  = variable_get('yasearch_key', '');
+
+		// Create new instance of Yandex class
+		$Yandex = new Yandex($user, $key);
+    
+		// Set Query
+		$Yandex -> query($query)
+				-> host($host)                      // set one host or multihost
+				-> page($page)                      // set current page
+				-> limit($limit)                    // set page limit
+				-> geo($geo)                        // set geo region - http://search.yaca.yandex.ru/geo.c2n
+				-> cat($cat)                        // set category - http://search.yaca.yandex.ru/cat.c2n
+				-> theme($theme)                    // set theme - http://help.yandex.ru/site/?id=1111797
+				-> sortby(Yandex::SORT_RLV)
+				-> groupby(Yandex::GROUP_DEFAULT, Yandex::GROUP_MODE_FLAT)
+            
+            -> set('max-title-length',   160)   // set some options
+            -> set('max-passage-length', 200)
+            -> request()                        // send request
+            ;
+
+		// Debug request
+		/*$request = $Yandex -> getRequest()->asXml();
+		$data = $Yandex -> getData();
+		$output = check_plain($request);
+		$output .= '<br />';
+		$output .= check_plain($data);
+		var_dump($query, $request, $data, $Yandex);
+		var_dump($data);
+		exit;*/
+	}
+
+	/*если нет результатов, то вывести друпаловский поиск*/
+	if (!isset($Yandex) || $Yandex->total() == 0) {
+		$data = search_data($keys, 'node');
+		if (!empty($data))
+			$output = drupal_render($data);
+		else
+			$output = '<div class="yasearch-empty">'.variable_get('yasearch_empty', '').'</div>';
+	} 
+	else {
+		$output .= '<div class="yasearch-header">';
+	
+		/*logo*/
+		$output .= '<div class="yasearch-logo">';
+		$output .= '<img src="/'.drupal_get_path('module', 'yasearch').'/images/yandex_'.variable_get('yasearch_image','rb').'.png" alt="Yandex logo" /> ';
+		$output .= '</div>';
+		
+		$output .= '<div class="yasearch-result-count">';
+		$output .= $Yandex->totalHuman(100 * $limit);
+		$output .= '</div>';
+		
+		$output .= '</div>';
+	
+		/*pager*/
+		global $pager_page_array, $pager_total, $pager_total_items;
+		$pager_page_array[$element] = $Yandex->getPage();
+		$pager_total_items[$element] = $Yandex->total(100 * $limit);
+		$pager_total[$element] = ceil($pager_total_items[$element] / $limit);
+	
+		/*items*/
+		$items = array();
+		foreach ($Yandex->results() as $result) {
+			$item = array();
+			$item['title'] = Yandex::highlight($result->title);
+			$item['url'] = $result->url;
+	
+			// get source and nid
+			$item['path'] = mb_substr(parse_url($item['url'], PHP_URL_PATH), 1);
+			$item['source'] = drupal_lookup_path('source', $item['path']);
+			if (!empty($item['source'])) {
+				$tmp = explode('/', $item['source']);
+				if (count($tmp) == 2 && $tmp[0] == 'node') {
+					$item['nid'] = $tmp['1'];
+				}
+			} 
+			else
+				unset($item['source']);
+			
+			if (!($item['nid'] > 0))
+				unset($item['nid']);
+	
+			if ($result->passages) {
+				foreach ($result->passages as $passage){
+					$item['passages'][] = Yandex::highlight($passage);
+				}
+			}
+			else {
+				$item['passages'][] = variable_get('yasearch_passage_empty', '[нет данных]');
+			}
+	
+			$items[] = $item;
+		}
+				
+		if (count($items) > 0) {
+			$output .= theme('yasearch_items', array('items' => $items));
+			pager_default_initialize($Yandex->total(100 * $limit), $limit);
+			$output .= theme('pager');
+		}
+		else {
+			$output .= variable_get('yasearch_empty', '');
+		} 
+	}
+
+	return '<div class="search-results yasearch-results">'.$output.'</div>';
+}
+
+/**
+ * Implementation of hook_theme().
+ */
+function yasearch_theme() {
+	$themes = array(
+		'yasearch_items' => array(
+			'template' => 'yasearch-items',
+			'arguments' => array('items' => NULL),
+		),
+		'yasearch_item' => array(
+			'template' => 'yasearch-item',
+			'arguments' => array('item' => NULL),
+		),
+	);
+    
+	return $themes;
+}   
+
