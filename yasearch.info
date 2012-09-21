@@ -1,13 +1,6 @@
 name = Yandex XML Search
-;description = Yandex XML Search
-package = custom
+description = Yandex XML Search integrated with standard search form
+
 core = 7.x
-;files[] = page_example.test
 
-; Information added by drupal.org packaging script on 2012-06-24
-version = "7.x-1.x"
-core = "7.x"
-;project = "examples"
-;datestamp = "1340497509"
-
-
+package = Custom
